@@ -3,7 +3,6 @@ __version__ = "0.1"
 
 import numpy as np
 
-
 def custom_confusion_metrics(y, pred_y, classes):
 
     confusion_matrix = np.zeros(shape=(len(classes)+2, len(classes)+2))
@@ -18,8 +17,7 @@ def custom_confusion_metrics(y, pred_y, classes):
         confusion_matrix[idx+1, -1] = (confusion_matrix[idx+1, idx+1]+1e-6) /(np.sum(confusion_matrix[idx+1, 1:-1])+1e-6)
         confusion_matrix[-1, idx+1] = (confusion_matrix[idx+1, idx+1]+1e-6) / (np.sum(confusion_matrix[1:-1, idx+1]) + 1e-6)
 
-    with np.printoptions(precision=4, suppress=True):
-        print(confusion_matrix)
+    print(np.array_repr(confusion_matrix, max_line_width=50, precision=4))
     return confusion_matrix
 
 

@@ -13,16 +13,21 @@ class Data:
         self.cov = None
         self.inv_cov = None
 
-    def set_population_mu(self, mu):
+    def set_mean(self, mu):
         self.population_mu = mu
 
     def set_cov(self, cov):
         self.cov = cov
         det = np.linalg.det(cov)
         if det == 0:
-            raise ZeroDivisionError('Covariance matrix is not invertible!')
+            raise ArithmeticError('Covariance matrix is not invertible!')
         self.inv_cov = tf.linalg.inv(cov)
+        if not self.is_pos_semidef(self.inv_cov):
+            raise ArithmeticError('Inv Cov is not Positive semi definite')
 
+    @classmethod
+    def is_pos_semidef(x):
+        return np.all(np.linalg.eigvals(x) >= 0)
 
 class ReplayManager:
     def __init__(self, **kwargs):
@@ -41,7 +46,8 @@ class ReplayManager:
 
     def fit_gaussian(self, features_x, label):
         self.library[label].set_mean(np.mean(features_x, axis=0))
-        self.library[label].set_cov(np.cov(features_x.T))
+        self.library[label].set_cov(np.cov(features_x.numpy().T))
+        print('here')
 
     def get_data(self, cls_label):
         return self.library[cls_label]

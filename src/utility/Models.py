@@ -1,7 +1,7 @@
 import tensorflow as tf
 from tensorflow.keras import layers, Sequential
 import tensorflow.keras as keras
-from src.losses import cluster_loss
+from src.losses import cluster_loss, mahalanobis_distance
 
 
 class DNet(tf.keras.Model):
@@ -13,8 +13,9 @@ class DNet(tf.keras.Model):
         self.clf_optimizer = tf.keras.optimizers.SGD(learning_rate=0.0001)
         self.clu_optimizer = tf.keras.optimizers.SGD(learning_rate=0.001)
 
-        self.ce_loss = tf.losses.categorical_crossentropy
-        self.l2_loss = tf.nn.l2_loss
+        self.clf_loss = tf.losses.categorical_crossentropy
+        self.mh_loss = mahalanobis_distance
+        self.clu_loss = cluster_loss
 
         self.combined_loss_metric = tf.keras.metrics.Mean(name='combined_loss')
         self.clf_loss_metric = tf.keras.metrics.Mean(name='clf_loss')
@@ -28,14 +29,14 @@ class DNet(tf.keras.Model):
         self.model = new_model
 
     def clf_train_step(self, images, labels):
-        predictions, norm_features = self.model(images)
-        clf_loss = self.ce_loss(labels, predictions)
+        predictions, _ = self.model(images)
+        clf_loss = self.clf_loss(labels, predictions)
         self.train_accuracy(labels, predictions)
         return clf_loss
 
     def clu_train_step(self, images, labels):
-        predictions, norm_features = self.model(images)
-        clu_loss = cluster_loss(labels, norm_features, margin_multiplier=1.0)
+        _, norm_features = self.model(images)
+        clu_loss = self.clu_loss(labels, norm_features, margin_multiplier=1.0)
         return clu_loss
 
     def compute_gradients(self, x, one_hot_y, y):

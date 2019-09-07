@@ -21,7 +21,7 @@ dataset = 'mnist'
 per_class_samples_retained = 20
 feature_dims = 64
 classes_per_addition_step = 2
-learning_epochs = 20
+learning_epochs = 0
 model_arch = 'resnet-18'
 batch_size = 128
 shuffle_buffer_size = 10000
@@ -70,6 +70,7 @@ for idx, training_batch in enumerate(training_order):
     y_replay = []
     jumbled_old_classes = copy.deepcopy(old_classes)    #Shuffle the classes around to move the instances all together
 
+    best_model_weights = None
     if idx > 0:
 
         #Add output units to the old model
@@ -130,18 +131,19 @@ for idx, training_batch in enumerate(training_order):
         model.reset_recorded_metrics(iter)
 
     #Set the best model so far
-    model.model.set_weights(best_model_weights)
+    if best_model_weights is not None:
+        model.model.set_weights(best_model_weights)
     del best_model_weights
 
     if idx > 0:
         del jumbled_old_classes, y_replay_1h, y_replay, x_replay
-    del x, y, y_1h
+    #del x, y, y_1h
 
     # Populate Replay Buffer
     for cls in training_batch:
         cls_x, _ = DataLoader.get_step_data(train_images, y_train, [cls])
         replay_manager.populate_replay_library(cls_x, cls)
-        soft_labels, features = model.model.test(cls_x)
+        soft_labels, features = model.test(cls_x)
         replay_manager.fit_gaussian(features, cls)
         old_classes.append(cls)
 
@@ -155,7 +157,7 @@ for idx, training_batch in enumerate(training_order):
     average_accuracy.append(model.test_accuracy.result())
     model.test_accuracy.reset_states()
     conf_matrix = custom_confusion_metrics(test_y, prediction_label, old_classes)
-
+    np.savetxt(os.path.join(base_output_dir, 'val_cm_{}.csv'.format(idx)), conf_matrix, delimiter=',')
     del test_x, test_y
 
     #Save the model
