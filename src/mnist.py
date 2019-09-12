@@ -8,7 +8,7 @@ import tensorflow as tf
 from src.utility.dataloader import DataLoader, Strategy
 from src.utility.Models import resnet18
 from src.replay_library import ReplayManager
-from src.utility.Models import DNet
+from src.utility.Models import DNet, MappingEstimator
 import numpy as np
 from src.utility.utils import modified_to_categorical, Metric
 import os
@@ -21,21 +21,28 @@ import operator
 dataset = 'mnist'
 per_class_samples_retained = 20
 feature_dims = 128
-classes_per_addition_step = 5
-learning_epochs = 25
+classes_per_addition_step = 2
+learning_epochs = 15
 model_arch = 'resnet-18'
 batch_size = 128
 shuffle_buffer_size = 10000
 replay_buffer_size = 2*classes_per_addition_step*per_class_samples_retained
 # one of clf-clu, kld, ws
-strategy = [Strategy.CLF]
+strategy = [Strategy.CLF, Strategy.CLU]
 #################################
 
 #Creating output dir
 base_output_dir = os.path.join('../output', dataset, 'StepClasses:{}'.format(classes_per_addition_step)
                                , '_'.join(strat.name for strat in strategy), str(feature_dims), model_arch)
-os.makedirs(base_output_dir)
 
+embedding_plot_dir = 'embed'
+euc_plot_dir = 'euclidean'
+mh_plot_dir = 'mahalanobis'
+
+os.makedirs(base_output_dir)
+os.makedirs(os.path.join(base_output_dir, embedding_plot_dir), exist_ok=True)
+os.makedirs(os.path.join(base_output_dir, euc_plot_dir), exist_ok=True)
+os.makedirs(os.path.join(base_output_dir, mh_plot_dir), exist_ok=True)
 
 train_images, y_train, test_images, y_test, training_order, sequence = DataLoader.load_data(dataset, n_classes_per_step=classes_per_addition_step)
 
@@ -53,6 +60,8 @@ replay_manager = ReplayManager()
 metric_manager = Metric(base_output_dir)
 
 old_classes = []
+
+
 
 for idx, training_batch in enumerate(training_order):
 
@@ -130,17 +139,18 @@ for idx, training_batch in enumerate(training_order):
                 pbar.update(1)
 
         #Validation after epoch
-        val_predictions, val_features = model.test(val_x)
-        metric_manager.embedding_plot(val_features, val_y, 'val_embed_ls-{}_epoch-{}.png'.format(idx, iter))
+        val_predictions, n_val_features, val_features = model.test(val_x)
+        metric_manager.embedding_plot(val_features, val_y, '{}/val_embed_ls-{}_epoch-{}.png'.format(embedding_plot_dir, idx, iter))
+        metric_manager.embedding_plot(val_features, val_y, '{}/n_val_embed_ls-{}_epoch-{}.png'.format(embedding_plot_dir, idx, iter))
         model.val_accuracy(val_predictions, val_y_1h)
 
         best_metric_to_track = model.update_best(model.clf_loss_metric.result(), best_metric_to_track, model.model.get_weights(), comparator)
 
         if idx > 0:
             mh_distances, mh_labels = replay_manager.get_mhdistance(val_features.numpy(), val_y)
-            metric_manager.gen_box_plots(mh_distances, mh_labels, 'val_box_ls-{}_epoch-{}.png'.format(idx, iter))
+            metric_manager.gen_box_plots(mh_distances, mh_labels, '{}/val_box_ls-{}_epoch-{}.png'.format(mh_plot_dir, idx, iter))
             mean_distances, mean_labels = replay_manager.get_mean_distance(val_features.numpy(), val_y)
-            metric_manager.gen_box_plots(mean_distances, mean_labels, 'val_box_euclidean_ls-{}_epoch-{}.png'.format(idx, iter))
+            metric_manager.gen_box_plots(mean_distances, mean_labels, '{}/val_box_euclidean_ls-{}_epoch-{}.png'.format(euc_plot_dir, idx, iter))
             #metric_manager.gen_QQplot(val_features.numpy(), val_y, 'val_QQ_ls-{}_epoch-{}'.format(idx, iter))
 
         model.reset_recorded_metrics(iter)
@@ -160,36 +170,37 @@ for idx, training_batch in enumerate(training_order):
     for cls in training_batch:
         cls_x, _ = DataLoader.get_step_data(train_images, y_train, [cls])
         replay_manager.init_replay_library(cls)
-        soft_labels, features = model.test(cls_x)
+        soft_labels, n_features, features = model.test(cls_x)
         replay_manager.fit_gaussian(features, cls)
         old_classes.append(cls)
         replay_manager.populate_replay_library(cls_x, cls)
 
     #Recompute validation using best model
-    val_predictions, val_features = model.test(val_x)
+    val_predictions, n_val_features, val_features = model.test(val_x)
     mh_distances, mh_labels = replay_manager.get_mhdistance(val_features.numpy(), val_y)
-    metric_manager.gen_box_plots(mh_distances, mh_labels, 'val_box_ls-{}_epoch-END.png'.format(idx))
+    metric_manager.gen_box_plots(mh_distances, mh_labels, '{}/val_box_ls-{}_epoch-END.png'.format(mh_plot_dir, idx))
     mean_distances, mean_labels = replay_manager.get_mean_distance(val_features.numpy(), val_y)
-    metric_manager.gen_box_plots(mean_distances, mean_labels, 'val_box_euclidean_ls-{}_epoch-END.png'.format(idx))
+    metric_manager.gen_box_plots(mean_distances, mean_labels, '{}/val_box_euclidean_ls-{}_epoch-END.png'.format(euc_plot_dir, idx))
     #For measure of fit to validation
 
 
     # Evaluate on all classes
     test_x, test_y = DataLoader.get_step_data(test_images, y_test, old_classes)
     test_y_1h = modified_to_categorical(test_y, old_classes)
-    predictions, prediction_features = model.test(test_x)
+    predictions, n_prediction_features, prediction_features = model.test(test_x)
     prediction_label = np.argmax(predictions, axis=-1)
     model.test_accuracy(test_y_1h, predictions)
 
     print('Overall Accuracy: {}'.format(model.test_accuracy.result()))
-    metric_manager.embedding_plot(prediction_features, test_y, 'test_embed_ls-{}_epoch-{}.png'.format(idx, iter))
+    metric_manager.embedding_plot(prediction_features, test_y, '{}/test_embed_ls-{}_epoch-{}.png'.format(embedding_plot_dir, idx, iter))
+    metric_manager.embedding_plot(n_prediction_features, test_y, '{}/n_test_embed_ls-{}_epoch-{}.png'.format(embedding_plot_dir, idx, iter))
     metric_manager.update_average_accuracy(model.test_accuracy.result())
     model.test_accuracy.reset_states()
     metric_manager.compute_confusion_matrix(test_y, prediction_label, old_classes, 'test_cm_{}.csv'.format(idx))
     mh_distances, mh_labels = replay_manager.get_mhdistance(prediction_features.numpy(), test_y)
-    metric_manager.gen_box_plots(mh_distances, mh_labels, 'test_box_ls-{}_epoch-{}.png'.format(idx, iter))
+    metric_manager.gen_box_plots(mh_distances, mh_labels, '{}/test_box_ls-{}_epoch-{}.png'.format(mh_plot_dir, idx, iter))
     mean_distances, mean_labels = replay_manager.get_mean_distance(prediction_features.numpy(), test_y)
-    metric_manager.gen_box_plots(mean_distances, mean_labels, 'test_box_euclidean_ls-{}_epoch-{}.png'.format(idx, iter))
+    metric_manager.gen_box_plots(mean_distances, mean_labels, '{}/test_box_euclidean_ls-{}_epoch-{}.png'.format(euc_plot_dir, idx, iter))
     #metric_manager.gen_QQplot(prediction_features.numpy(), test_y, 'test_QQ_ls-{}_epoch-{}'.format(idx, iter))
 
     del test_x, test_y, test_y_1h, prediction_features, predictions

@@ -5,6 +5,8 @@ from src.losses import cluster_loss, mahalanobis_distance
 from src.utility.dataloader import Strategy
 import operator
 import copy
+import os
+
 
 class DNet(tf.keras.Model):
 
@@ -14,7 +16,7 @@ class DNet(tf.keras.Model):
 
         self.strategy = kwargs.get('strategy', [Strategy.CLF, Strategy.CLU])
         self.clf_optimizer = tf.keras.optimizers.SGD(learning_rate=kwargs.get('lr_clf', 0.0001))
-        self.clu_optimizer = tf.keras.optimizers.SGD(learning_rate=kwargs.get('lr_clu', 0.0001))
+        self.clu_optimizer = tf.keras.optimizers.SGD(learning_rate=kwargs.get('lr_clu', 0.001))
         self.dist_optimizer = tf.keras.optimizers.SGD(learning_rate=kwargs.get('lr_dist', 0.0001))
 
         self.clf_loss = tf.losses.categorical_crossentropy
@@ -42,20 +44,20 @@ class DNet(tf.keras.Model):
         self.model = new_model
 
     def clf_train_step(self, images, labels, setMetrics=True):
-        predictions, _ = self.model(images)
+        predictions, _, _ = self.model(images)
         clf_loss = self.clf_loss(labels, predictions)
         if setMetrics:
             self.train_accuracy(labels, predictions)
         return clf_loss
 
     def clu_train_step(self, images, labels):
-        _, norm_features = self.model(images)
+        _, norm_features, _ = self.model(images)
         clu_loss = self.clu_loss(labels, norm_features, margin_multiplier=1.0)
         return clu_loss
 
-    def dist_train_step(self, images, means, inv_cov, flags=None):
-        _, norm_features = self.model(images)
-        dist_loss = self.dist_loss(norm_features, means, inv_cov, flags)
+    def dist_train_step(self, images, means, inv_cov):
+        _, norm_features, features = self.model(images)
+        dist_loss = self.dist_loss(norm_features, means, inv_cov)
         return dist_loss
 
     def compute_gradients(self, x, one_hot_y, y):
@@ -74,10 +76,12 @@ class DNet(tf.keras.Model):
         self.update_metrics(clf_loss, clu_loss)
         return clf_gradients, clu_gradients
 
-    def compute_replay_gradients(self, x, y_1h, means, inv_cov, flags=None):
+    def compute_replay_gradients(self, x, y_1h, means, inv_cov, dist_with_old_class=True):
         with tf.GradientTape() as clf_tape, tf.GradientTape() as dist_tape:
             clf_loss = self.clf_train_step(x, y_1h)
-            dist_loss = self.dist_train_step(x, means, inv_cov, flags)
+            dist_loss = self.dist_train_step(x, means, inv_cov)
+            if dist_with_old_class:
+                dist_loss = -dist_loss
             n_dist_loss = tf.reshape(dist_loss/tf.keras.backend.max(tf.math.abs(dist_loss), axis=0), [dist_loss.shape[0]])
         clf_gradients = clf_tape.gradient(clf_loss, self.model.trainable_variables)
         dist_gradient = dist_tape.gradient(n_dist_loss, self.model.trainable_variables)
@@ -123,8 +127,61 @@ class DNet(tf.keras.Model):
 
     @tf.function
     def test(self, test_x):
-        predictions, norm_features = self.model(test_x)
-        return predictions, norm_features
+        predictions, norm_features, features = self.model(test_x)
+        return predictions, norm_features, features
+
+class MappingEstimator(tf.keras.Model):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.class_label_tag = kwargs.get('cls_label')
+        self.is_input_normalised = kwargs.get('is_input_normalised', False)
+        self.model = self.create_model(kwargs.get('ndims', 128))
+        self.checkpoint_path = kwargs.get('checkpoint_path')
+        self.loss = kwargs.get('loss', keras.losses.mean_squared_error)
+        self.optimizer = tf.keras.optimizers.Adam()
+        self.train_loss_metric = kwargs.get('metric', keras.metrics.Mean(name='train_loss'))
+        self.eval_loss_metric = kwargs.get('metric', keras.metrics.Mean(name='eval_loss'))
+
+    @tf.function
+    def train(self, x, y):
+        with tf.GradientTape() as tape:
+            predictions = self.model(x)
+            loss = self.loss(y, predictions)
+        gradients = tape.gradient(loss, self.model.trainable_variables)
+        self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+
+        self.train_loss_metric(loss)
+
+    @tf.function
+    def test_step(self, x, y):
+        predictions = self.model(x)
+        t_loss = self.loss_object(y, predictions)
+
+        self.eval_loss_metric(t_loss)
+
+    def reset_metric_states(self):
+        print('{} -- Training Loss: {}, Validation Loss: {}'.format(self.class_label_tag, self.train_loss_metric.result()
+                                                                    , self.eval_loss_metric.result()))
+        self.train_loss_metric.reset_states()
+        self.eval_loss_metric.reset_states()
+
+    def create_model(self, inp_dims):
+        inp_layer = layers.Input(shape=(None, inp_dims))
+        mid_layer = layers.Dense(units=inp_dims*2)(inp_layer)
+        act_layer = layers.LeakyReLU(alpha=0.3)(mid_layer)
+        out_layer = layers.Dense(units=inp_dims)(act_layer)
+        if not self.is_input_normalised:
+            output = layers.LeakyReLU(alpha=0.3)(out_layer)
+        else:
+            output = keras.layers.Lambda(lambda x: keras.backend.l2_normalize(x, axis=1))(out_layer)
+
+        return keras.models.Model(inputs=inp_layer, outputs=output)
+
+    def load_weight(self, filename):
+        self.model.load_weights(filepath=os.path.join(self.checkpoint_path, filename))
+
+    def save_model(self, filename):
+        self.model.save(os.path.join(self.checkpoint_path,filename))
 
 
 # Copied from https://blog.csdn.net/abc13526222160/article/details/90057121
@@ -215,7 +272,7 @@ def add_output_units(base_model, input_layer, number_of_extra_units, iteration_n
 def resnet18(input_dims, feature_dims, num_classes, strategy):
     inp_layer, fe_output = get_resnet(input_dims=input_dims, feature_dims=feature_dims)
 
-    if Strategy.NORM in strategy:
+    if Strategy.NORM in strategy or Strategy.CLU in strategy:
         norm_output = keras.layers.Lambda(lambda x: keras.backend.l2_normalize(x, axis=1))(fe_output)
     else:
         norm_output = fe_output
@@ -223,4 +280,4 @@ def resnet18(input_dims, feature_dims, num_classes, strategy):
     class_output_layer = keras.layers.Dense(units=num_classes, name='output')(fe_output)
     ce_output = keras.layers.Activation('softmax')(class_output_layer)
 
-    return keras.Model(inputs=inp_layer, outputs=[ce_output, norm_output])
+    return keras.Model(inputs=inp_layer, outputs=[ce_output, norm_output, fe_output])

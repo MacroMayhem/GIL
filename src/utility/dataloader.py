@@ -14,6 +14,7 @@ class Strategy(Enum):
     MIX_REPLAY = 3
     DIST_OLD = 4
     NORM = 5
+    DEEP_APPROX = 6
 
 class DataLoader:
     @staticmethod

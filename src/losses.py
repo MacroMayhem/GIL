@@ -40,7 +40,7 @@ except ImportError:
     HAS_SKLEARN = False
 
 
-def mahalanobis_distance(samples, means, inv_covs, flags=None):
+def mahalanobis_distance(samples, means, inv_covs):
     """
     Computes mahalanobis distance for the batch
     :param samples: (batch, feature_dim)
@@ -53,10 +53,7 @@ def mahalanobis_distance(samples, means, inv_covs, flags=None):
     shifted_samples = tf.reshape(tf.subtract(samples, means), [batch_size, -1, dims])
     left_mult = tf.reshape(tf.linalg.matmul(shifted_samples, inv_covs), [batch_size, -1])
     output = tf.math.sqrt(tf.keras.backend.batch_dot(left_mult, tf.reshape(shifted_samples, [batch_size, -1]), axes=[1, 1]))
-    if flags is not None:
-        return tf.reduce_sum(tf.multiply( output, tf.reshape(flags, [batch_size, -1])), 1)
-    else:
-        return output
+    return output
 
 
 
