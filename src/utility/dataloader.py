@@ -8,10 +8,12 @@ np.random.seed(42)
 
 
 class Strategy(Enum):
-    CLF_CLU = 0
-    KLD = 1
-    WS = 2
-
+    CLF = 0
+    CLU = 1
+    DIST = 2
+    MIX_REPLAY = 3
+    DIST_OLD = 4
+    NORM = 5
 
 class DataLoader:
     @staticmethod
@@ -20,6 +22,8 @@ class DataLoader:
             (train_images, y_train), (test_images, y_test) = tf.keras.datasets.mnist.load_data()
         elif dataset_name == 'cifar100':
             (train_images, y_train), (test_images, y_test) = tf.keras.datasets.cifar100.load_data()
+        elif dataset_name == 'cifar-10':
+            (train_images, y_train), (test_images, y_test) = tf.keras.datasets.cifar10.load_data()
         else:
             raise NotImplementedError('{} currently not implemented!', dataset_name)
         training_order = np.unique(y_test)
@@ -33,7 +37,7 @@ class DataLoader:
             grouped_ordering.append([training_order[i]for i in range(initial_learning_size)])
             grouped_ordering.append(training_order[i:i + n_classes_per_step] for i in range(initial_learning_size, len(training_order), n_classes_per_step))
 
-        return train_images, y_train, test_images, y_test, grouped_ordering
+        return train_images, y_train, test_images, y_test, grouped_ordering, training_order
 
     @staticmethod
     def get_step_data(x, y, classes_to_extract, replay=False):
