@@ -61,7 +61,6 @@ def main(args):
         print('Training batch: '.format(training_batch))
         # data preprocessing:
         training_loader = get_training_dataloader(
-            None, None,
             include_list=training_batch,
             num_workers=args.w,
             batch_size=args.b,
@@ -69,7 +68,6 @@ def main(args):
         )
 
         test_loader = get_test_dataloader(
-            None, None,
             include_list=training_batch + old_data_batch,
             num_workers=args.w,
             batch_size=args.b,
@@ -77,7 +75,6 @@ def main(args):
         )
 
         new_test_loader = get_test_dataloader(
-            None, None,
             include_list=training_batch,
             num_workers=args.w,
             batch_size=args.b,
@@ -85,7 +82,6 @@ def main(args):
         )
         if idx > 0:
             old_test_loader = get_test_dataloader(
-                None, None,
                 include_list=old_data_batch,
                 num_workers=args.w,
                 batch_size=args.b,

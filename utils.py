@@ -162,8 +162,7 @@ def get_buffer_dataset(buffer_size=50):
     return buffer_dataset
 
 
-
-def get_training_dataloader(mean, std, batch_size=16, num_workers=2, include_list=[], shuffle=True):
+def get_training_dataloader(batch_size=16, num_workers=2, include_list=[], shuffle=True):
     """ return training dataloader
     Args:
         mean: mean of cifar100 training dataset
@@ -192,7 +191,7 @@ def get_training_dataloader(mean, std, batch_size=16, num_workers=2, include_lis
     return cifar100_training_loader
 
 
-def get_test_dataloader(mean, std, batch_size=16, num_workers=2, include_list = [], shuffle=True):
+def get_test_dataloader(batch_size=16, num_workers=2, include_list = [], shuffle=True):
     """ return training dataloader
     Args:
         mean: mean of cifar100 test dataset
